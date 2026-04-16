@@ -1,6 +1,10 @@
 import asyncio
+import json
+import time
+import aiohttp
 import httpx
 import litellm
+from pathlib import Path
 from config import (
     GROQ_API_KEY,
     OPENROUTER_API_KEY,
@@ -10,6 +14,111 @@ from config import (
 )
 
 litellm.set_verbose = False
+
+# ── GitHub Copilot token (shared with Weinrot credentials) ──────────────────
+_COPILOT_CREDENTIALS = Path("/root/weinrot/data/credentials")
+_COPILOT_TOKEN_FILE = _COPILOT_CREDENTIALS / "github-copilot.token.json"
+_COPILOT_AUTH_FILE  = _COPILOT_CREDENTIALS / "auth-profiles.json"
+_COPILOT_REFRESH_URL = "https://api.github.com/copilot_internal/v2/token"
+_COPILOT_API_BASE    = "https://api.individual.githubcopilot.com"
+
+class _CopilotToken:
+    def __init__(self):
+        self._token = None
+        self._expires_at = 0.0
+        self._api_base = _COPILOT_API_BASE
+        self._lock = asyncio.Lock()
+
+    def _load_cached(self) -> bool:
+        try:
+            if _COPILOT_TOKEN_FILE.exists():
+                data = json.loads(_COPILOT_TOKEN_FILE.read_text())
+                token = data.get("token")
+                exp = data.get("expiresAt", 0)
+                if exp > 1e12:
+                    exp = exp / 1000
+                if time.time() < exp - 60:
+                    self._token = token
+                    self._expires_at = exp
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _oauth_token(self):
+        try:
+            data = json.loads(_COPILOT_AUTH_FILE.read_text())
+            return data["profiles"]["github-copilot:github"]["token"]
+        except Exception:
+            return None
+
+    async def _refresh(self) -> str:
+        oauth = self._oauth_token()
+        if not oauth:
+            raise RuntimeError("No GitHub OAuth token for Copilot refresh")
+        headers = {
+            "Authorization": f"Bearer {oauth}",
+            "Editor-Version": "Neovim/0.6.1",
+            "Editor-Plugin-Version": "copilot.vim/1.16.0",
+            "User-Agent": "GithubCopilot/1.155.0",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(_COPILOT_REFRESH_URL, headers=headers) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+        token = data["token"]
+        exp = data.get("expires_at", time.time() + 3600)
+        self._token = token
+        self._expires_at = exp
+        if data.get("endpoints", {}).get("api"):
+            self._api_base = data["endpoints"]["api"]
+        # update cache
+        try:
+            _COPILOT_TOKEN_FILE.write_text(json.dumps({
+                "token": token,
+                "expiresAt": int(exp * 1000),
+                "updatedAt": int(time.time() * 1000),
+            }, indent=2))
+        except Exception:
+            pass
+        return token
+
+    async def get(self) -> str:
+        async with self._lock:
+            if self._token and time.time() < self._expires_at - 60:
+                return self._token
+            if self._load_cached():
+                return self._token
+            return await self._refresh()
+
+    def api_base(self) -> str:
+        return self._api_base
+
+_copilot = _CopilotToken()
+
+async def _copilot_chat(model_name: str, messages: list, max_tokens: int, temperature: float) -> str:
+    """Call GitHub Copilot API directly (bypasses litellm)."""
+    token = await _copilot.get()
+    payload = {
+        "model": model_name,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Editor-Version": "vscode/1.85.0",
+        "Editor-Plugin-Version": "copilot-chat/0.14.0",
+        "Copilot-Integration-Id": "vscode-chat",
+    }
+    url = f"{_copilot.api_base()}/chat/completions"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+    return data["choices"][0]["message"]["content"] or ""
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def llm_call(
@@ -32,6 +141,22 @@ async def llm_call(
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
+    # Copilot route: bypass litellm entirely
+    if model_id.startswith("copilot/"):
+        model_name = model_id[len("copilot/"):]
+        last_error = None
+        for attempt in range(3):
+            try:
+                return await _copilot_chat(model_name, messages, max_tokens, temperature)
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if "429" in err_str or "rate" in err_str.lower():
+                    await asyncio.sleep(2 ** (attempt + 1))
+                    continue
+                return f"[{agent_name} unavailable: {err_str[:200]}]"
+        return f"[{agent_name} unavailable: rate limit — {str(last_error)[:200]}]"
+
     if model_id.startswith("groq/"):
         kwargs["model"] = model_id
         kwargs["api_key"] = GROQ_API_KEY
@@ -48,7 +173,6 @@ async def llm_call(
         kwargs["api_base"] = "https://models.inference.ai.azure.com"
 
     else:
-        # Fallback: pass as-is and hope litellm knows what to do
         kwargs["model"] = model_id
 
     last_error: Exception | None = None

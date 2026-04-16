@@ -12,10 +12,13 @@ PORT = 8083
 ACADEMIA_VERSION = "2.0"
 
 MODEL_TRANSLATION_INPUT = "groq/llama-3.1-8b-instant"
-MODEL_SENIOR = "groq/llama-3.3-70b-versatile"
-MODEL_COORD_1 = "openrouter/nousresearch/hermes-3-llama-3.1-405b:free"
-MODEL_COORD_2 = "openrouter/openai/gpt-oss-120b:free"
-MODEL_RESEARCHER_1 = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+MODEL_SENIOR_WEINROT  = "copilot/claude-sonnet-4.6"   # via Weinrot app proxy
+MODEL_SENIOR_LUMEINAO = "copilot/claude-haiku-4.5"    # fast Claude
+MODEL_SENIOR_WULFSTIER = "copilot/claude-opus-4.6"    # high Claude
+MODEL_SENIOR = MODEL_SENIOR_LUMEINAO                  # fallback for any future senior
+MODEL_COORD_1 = "groq/llama-3.3-70b-versatile"
+MODEL_COORD_2 = "groq/llama-3.3-70b-versatile"
+MODEL_RESEARCHER_1 = "groq/llama-3.3-70b-versatile"
 MODEL_RESEARCHER_2 = "openrouter/google/gemma-3-27b-it:free"
 MODEL_RESEARCHER_3 = "openrouter/qwen/qwen3-30b-a3b:free"
 MODEL_STUDENT_1 = "github/Phi-4-mini-instruct"

@@ -1,5 +1,5 @@
 // Academia Intermundia 2.0 — Main App
-const API = window.ACADEMIA_API || "https://80.211.139.85/api/academia";
+const API = window.ACADEMIA_API || "https://80.211.139.85:8083/api";
 
 // State
 const state = {

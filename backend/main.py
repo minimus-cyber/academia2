@@ -198,9 +198,7 @@ async def start_constitution(background_tasks: BackgroundTasks):
     async def _run_constitution(rid: int):
         _round_active[rid] = True
         try:
-            async for event in run_constitution_round():
-                # The generator creates its own round, so we emit to the
-                # round_id found in each event (or the pre-created one)
+            async for event in run_constitution_round(rid):
                 emit_rid = event.get("round_id", rid)
                 await _emit(emit_rid, event)
         except Exception as e:

@@ -560,15 +560,16 @@ async def publish_round(round_id: int, professor_notes: str = "") -> dict:
 
 # ─── constitution round ───────────────────────────────────────────────────────
 
-async def run_constitution_round() -> AsyncGenerator[dict, None]:
+async def run_constitution_round(round_id: int = None) -> AsyncGenerator[dict, None]:
     """
     Special round: drafts the Constitution of Academia Intermundia.
-    This generator also creates its own round in the DB.
+    If round_id is provided, uses the existing round; otherwise creates one.
     """
-    round_id = await create_round(
-        "Write the Constitution of Academia Intermundia",
-        "Scrivi la Costituzione di Academia Intermundia",
-    )
+    if round_id is None:
+        round_id = await create_round(
+            "Write the Constitution of Academia Intermundia",
+            "Scrivi la Costituzione di Academia Intermundia",
+        )
 
     yield {"event": "phase_change", "phase": "constitution", "round_id": round_id}
     yield {"event": "round_created", "round_id": round_id}
