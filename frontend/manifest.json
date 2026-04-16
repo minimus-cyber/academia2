@@ -1,0 +1,13 @@
+{
+  "name": "Academia Intermundia",
+  "short_name": "Academia",
+  "description": "A digital academic swarm of AI researchers",
+  "start_url": "/academia/",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#9B1B30",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

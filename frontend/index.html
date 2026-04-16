@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Academia Intermundia — Digital Academic Swarm">
+  <title>Academia Intermundia</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#9B1B30">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Droid+Sans+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <!-- API endpoint config: override this in deployment -->
+  <script>window.ACADEMIA_API = "https://80.211.139.85/api/academia";</script>
+</head>
+<body>
+  <div class="hex-bg"></div>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-logo">
+        <h1>Academia Intermundia</h1>
+        <p>v2.0 — 35 DAOs</p>
+      </div>
+      <nav>
+        <div class="nav-section">Operations</div>
+        <a href="#" data-view="dashboard" onclick="navigate('dashboard');return false;">⬡ Dashboard</a>
+        <a href="#" data-view="constitution" onclick="navigate('constitution');return false;">§ Constitution</a>
+
+        <div class="nav-section">Knowledge</div>
+        <a href="#" data-view="wiki" onclick="navigate('wiki',{});return false;">◈ Wiki</a>
+        <a href="#" data-view="publications" onclick="navigate('publications',{});return false;">◉ Publications</a>
+        <a href="#" data-view="labs" onclick="navigate('labs',{});return false;">⚗ Labs</a>
+
+        <div class="nav-section">Academia</div>
+        <a href="#" data-view="agents" onclick="navigate('agents');return false;">◆ DAOs</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main id="main">
+      <div id="topbar">
+        <h2 id="topbar-title">Academia Intermundia</h2>
+        <span class="status-badge" id="status-badge">v2.0</span>
+      </div>
+
+      <div id="content">
+        <div class="loader"><span></span><span></span><span></span></div>
+      </div>
+
+      <!-- Professor input bar -->
+      <div id="input-bar">
+        <textarea
+          id="professor-input"
+          placeholder="Professor — assign a research theme or give instructions... (Enter to send, Shift+Enter for newline)"
+          rows="1"
+          onkeydown="handleProfessorInput(event)"
+          oninput="autoResize(this)"></textarea>
+        <button class="btn" onclick="handleProfessorInput({type:'click',preventDefault:()=>{}})">→</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="wiki.js"></script>
+  <script src="lab.js"></script>
+</body>
+</html>
