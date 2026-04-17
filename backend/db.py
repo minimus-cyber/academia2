@@ -636,3 +636,27 @@ async def get_wiki_articles_by_round(round_id: int) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+async def get_all_lab_artifacts() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
+            "SELECT la.*, a.name as author_name, a.department "
+            "FROM lab_artifacts la "
+            "LEFT JOIN agents a ON la.author_id = a.id "
+            "ORDER BY la.id DESC"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+async def get_lab_artifact_by_id(artifact_id: int):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
+            "SELECT la.*, a.name as author_name, a.department "
+            "FROM lab_artifacts la "
+            "LEFT JOIN agents a ON la.author_id = a.id "
+            "WHERE la.id = ?", (artifact_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+

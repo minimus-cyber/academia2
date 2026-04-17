@@ -22,7 +22,7 @@ from db import (
     get_wiki_page,
     get_all_publications,
     get_publication,
-    get_lab_artifacts,
+    get_lab_artifacts, get_all_lab_artifacts, get_lab_artifact_by_id,
     create_round,
     count_agents,
     set_round_status,
@@ -423,6 +423,20 @@ async def pub_html(pub_id: int):
     html = pub.get("content_it_html") or pub.get("content_en_html") or "<p>No content</p>"
     return HTMLResponse(content=html)
 
+
+
+@app.get("/labs/all")
+async def lab_artifacts_all():
+    """Return all lab artifacts with author info, newest first."""
+    return await get_all_lab_artifacts()
+
+@app.get("/labs/artifact/{artifact_id}")
+async def lab_artifact_single(artifact_id: int):
+    """Return a single lab artifact by ID."""
+    art = await get_lab_artifact_by_id(artifact_id)
+    if not art:
+        raise HTTPException(status_code=404)
+    return art
 
 @app.get("/labs/{round_id}")
 async def lab_artifacts(round_id: int):
