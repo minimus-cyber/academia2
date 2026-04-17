@@ -26,9 +26,21 @@ from db import (
     upsert_student_thesis,
     get_student_thesis,
     get_wiki_page,
+    create_wiki_article,
+    update_wiki_article,
+    search_wiki_articles,
+    get_wiki_article,
+)
+from wiki import (
+    get_relevant_articles,
+    format_wiki_context,
+    parse_wiki_action,
+    write_wiki_contribution,
+    write_synthesis_article,
 )
 from llm import llm_call_agent, translate_to_italian
 from config import CONSTITUTION_CONSTRAINTS
+from dm import maybe_dm_peer
 
 # ─── in-memory state ─────────────────────────────────────────────────────────
 _round_event_queues: dict[int, list[asyncio.Queue]] = {}
@@ -166,6 +178,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
     yield {"event": "phase_change", "phase": "research"}
 
     coordinators = await get_agents_by_role("coordinator")
+    all_agents = await get_all_agents()
     dept_wiki_pages: dict[str, list[dict]] = {}
 
     for coordinator in coordinators:
@@ -190,22 +203,32 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
         researchers = await get_agents_by_department(dept)
         researchers = [r for r in researchers if r["role"] == "researcher"]
 
+        # ── FILOSOFIA WIKI: i ricercatori leggono il wiki PRIMA di scrivere ──
+        relevant_wiki = await get_relevant_articles(theme_en, limit=5)
+        wiki_ctx = format_wiki_context(relevant_wiki)
+
         async def _researcher_work(researcher: dict) -> tuple[dict, str, str | None]:
             memories = await get_recent_memories(researcher["id"], limit=3)
             memories_ctx = _format_memories(memories)
             r_prompt = (
+                f"{wiki_ctx}\n\n"
                 f"Lab assignment from {coordinator['name']}:\n{coord_output}\n\n"
                 f"Round theme: {theme_en}\n\n"
                 f"Your recent work context:\n{memories_ctx}\n\n"
                 f"Conduct your research on this theme from your disciplinary perspective "
-                f"({researcher.get('discipline', 'your field')}). "
-                f"Produce a structured research report. "
-                f"If you propose an experiment, state clearly what would FALSIFY your hypothesis "
-                f"(Popperian principle). "
-                f"If you create HTML code for a simulation or visualization, enclose it in "
-                f"```html ... ``` tags. Maximum 600 words."
+                f"({researcher.get('discipline', 'your field')}).\n\n"
+                f"WIKI PROTOCOL (mandatory):\n"
+                f"1. Check the existing wiki articles above.\n"
+                f"2. If a relevant article exists: expand it. Start your response with:\n"
+                f"   ACTION: EXPAND | Article: [exact ID or title from above]\n"
+                f"3. If no relevant article exists: create a new entry. Start with:\n"
+                f"   ACTION: CREATE | Title: [descriptive article title]\n"
+                f"4. After the ACTION line, write your full contribution (max 600 words).\n"
+                f"5. If proposing an experiment, state clearly what would FALSIFY your hypothesis "
+                f"(Popperian principle).\n"
+                f"6. If creating HTML simulation/visualization, enclose it in ```html ... ``` tags."
             )
-            r_output = await llm_call_agent(researcher, researcher["identity_prompt"], r_prompt, max_tokens=800)
+            r_output = await llm_call_agent(researcher, researcher["identity_prompt"], r_prompt, max_tokens=900)
             html_artifact = _extract_html_artifact(r_output)
             return researcher, r_output, html_artifact
 
@@ -222,7 +245,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
             if not r_output:
                 continue
 
-            # Save as wiki page (draft)
+            # Save as wiki page (draft) — legacy, per compatibilità
             page_title = f"{researcher['name']} — {theme_en[:60]}"
             page_id = await add_wiki_page(round_id, researcher["id"], page_title, r_output)
             await add_memory(
@@ -233,6 +256,27 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
             dept_pages.append({"id": page_id, "author_id": researcher["id"],
                                 "author_name": researcher["name"], "title": page_title,
                                 "content_en": r_output})
+            # ── WIKI REALE: crea o aggiorna articolo permanente ──────────────
+            w_action, w_ref, w_content = parse_wiki_action(r_output)
+            art_id, art_op = await write_wiki_contribution(
+                author_id=researcher["id"],
+                round_id=round_id,
+                theme=theme_en,
+                action=w_action,
+                article_ref=w_ref,
+                content=w_content,
+                department=dept,
+            )
+            yield {
+                "event": "wiki_article",
+                "article_id": art_id,
+                "operation": art_op,
+                "author_id": researcher["id"],
+                "author_name": researcher["name"],
+                "phase": "research",
+            }
+            # Spontaneous peer DM (30% chance, fire-and-forget)
+            asyncio.create_task(maybe_dm_peer(researcher, theme_en, all_agents))
             yield {
                 "event": "wiki_page",
                 "page_id": page_id,
@@ -267,7 +311,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
     # ── PHASE 3: STUDENT PARTICIPATION ─────────────────────────────────────
     yield {"event": "phase_change", "phase": "students"}
 
-    all_agents = await get_all_agents()
+    # all_agents already fetched in Phase 2
     students = [a for a in all_agents if a["role"] == "student"]
 
     matching_students = []
@@ -444,6 +488,28 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
                     "content": revised_coord,
                     "phase": "revision",
                 }
+
+    # ── WIKI: articolo di sintesi del round prodotto dai Senior ────────────
+    combined_synthesis = "\n\n---\n\n".join(
+        r for r in review_results if isinstance(r, str) and r
+    )
+    if combined_synthesis:
+        first_senior = seniores[0] if seniores else None
+        if first_senior:
+            synthesis_art_id = await write_synthesis_article(
+                senior_id=first_senior["id"],
+                round_id=round_id,
+                theme=theme_en,
+                synthesis_content=combined_synthesis,
+            )
+            yield {
+                "event": "wiki_article",
+                "article_id": synthesis_art_id,
+                "operation": "synthesis",
+                "author_id": first_senior["id"],
+                "author_name": first_senior["name"],
+                "phase": "senior_review",
+            }
 
     # Approve all remaining draft/revised wiki pages
     remaining_pages = await get_wiki_pages(round_id)

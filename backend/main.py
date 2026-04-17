@@ -26,6 +26,17 @@ from db import (
     create_round,
     count_agents,
     set_round_status,
+    init_dm_table,
+    create_dm,
+    get_dm_thread,
+    get_dm_conversations,
+    mark_dm_read,
+    get_all_wiki_articles,
+    get_wiki_article,
+    get_wiki_article_revisions,
+    get_wiki_article_links,
+    get_wiki_articles_by_round,
+    search_wiki_articles,
 )
 from agents import seed_agents
 from rounds import (
@@ -41,11 +52,13 @@ from rounds import (
 from wiki import get_wiki_pages_by_round, search_wiki
 from publications import list_publications_all, get_publication_detail
 from translation import translate_input
+from dm import _dm_subscribers, emit_dm, dao_dm_reply, notify_weinrot_dm
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await init_dm_table()
     async with aiosqlite.connect(DB_PATH) as db:
         await seed_agents(db)
     yield
@@ -70,6 +83,16 @@ class StartRoundRequest(BaseModel):
 
 class PlacetRequest(BaseModel):
     notes: Optional[str] = ""
+
+
+class RevisionRequest(BaseModel):
+    notes: str = "Please revise."
+
+
+class DMRequest(BaseModel):
+    from_id: str
+    to_id: str
+    content: str
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -174,6 +197,30 @@ async def give_placet(round_id: int, body: PlacetRequest, background_tasks: Back
     return {"message": "Placet received. Publication in progress.", "round_id": round_id}
 
 
+@app.post("/rounds/{round_id}/revision")
+async def request_revision(round_id: int, body: RevisionRequest, background_tasks: BackgroundTasks):
+    """Professor requests a revision of a round. Marks it rejected and starts a new round
+    with the same theme + professor notes injected as context."""
+    r = await get_round(round_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Round not found")
+    if r["status"] not in ("awaiting_placet", "active"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Round status is '{r['status']}', cannot request revision",
+        )
+    # Mark original round as rejected
+    await set_round_status(round_id, "rejected")
+    # Build new round incorporating professor feedback in both languages
+    prof_note = f"[PROFESSOR REVISION: {body.notes}]"
+    revision_theme_en = f"{r['theme_en']} {prof_note}"
+    revision_theme_it = f"{r['theme_it']} {prof_note}"
+    new_round_id = await create_round(revision_theme_en, revision_theme_it)
+    background_tasks.add_task(run_round_task, new_round_id, revision_theme_en)
+    await _emit(round_id, {"event": "revision_requested", "new_round_id": new_round_id})
+    return {"message": "Revision round started.", "original_round_id": round_id, "new_round_id": new_round_id}
+
+
 async def _do_publish(round_id: int, notes: str):
     pub = await publish_round(round_id, notes)
     await _emit(round_id, {
@@ -181,6 +228,78 @@ async def _do_publish(round_id: int, notes: str):
         "publication_id": pub.get("id") if pub else None,
         "round_id": round_id,
     })
+
+
+# ── Direct Messaging endpoints ────────────────────────────────────────────────
+
+@app.get("/dm/stream/{participant_id}")
+async def dm_stream(participant_id: str):
+    q = asyncio.Queue()
+    _dm_subscribers.setdefault(participant_id, []).append(q)
+
+    async def gen():
+        try:
+            while True:
+                msg = await q.get()
+                yield f"data: {json.dumps(msg)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                _dm_subscribers[participant_id].remove(q)
+            except (ValueError, KeyError):
+                pass
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/dm/conversations/{participant_id}")
+async def list_conversations(participant_id: str):
+    convs = await get_dm_conversations(participant_id)
+    all_agents = await get_all_agents()
+    agent_map = {a["id"]: a for a in all_agents}
+    agent_map["professor"] = {"id": "professor", "name": "The Professor", "role": "professor", "symbol": "🎓"}
+    agent_map["weinrot"] = {"id": "weinrot", "name": "Weinrot", "role": "orchestrator", "symbol": "🍷"}
+    for c in convs:
+        other = c.get("other", "")
+        a = agent_map.get(other, {})
+        c["other_name"] = a.get("name", other)
+        c["other_symbol"] = a.get("symbol", "🤖")
+        c["other_role"] = a.get("role", "")
+    return convs
+
+
+@app.get("/dm/thread/{participant_a}/{participant_b}")
+async def get_thread(participant_a: str, participant_b: str):
+    await mark_dm_read(participant_a, participant_b)
+    return await get_dm_thread(participant_a, participant_b)
+
+
+@app.post("/dm/send")
+async def send_dm(body: DMRequest, background_tasks: BackgroundTasks):
+    SYSTEM_PARTICIPANTS = {"professor", "weinrot"}
+    if body.from_id not in SYSTEM_PARTICIPANTS:
+        agent = await get_agent(body.from_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Sender '{body.from_id}' not found")
+    if body.to_id not in SYSTEM_PARTICIPANTS:
+        agent = await get_agent(body.to_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Recipient '{body.to_id}' not found")
+
+    dm_id = await create_dm(body.from_id, body.to_id, body.content)
+    payload = {"id": dm_id, "from_id": body.from_id, "to_id": body.to_id,
+               "content": body.content, "created_at": "now"}
+    await emit_dm(body.to_id, payload)
+    await emit_dm(body.from_id, payload)  # also notify sender's SSE stream
+
+    if body.to_id not in SYSTEM_PARTICIPANTS:
+        background_tasks.add_task(dao_dm_reply, body.to_id, body.from_id, body.content)
+    elif body.to_id == "professor":
+        background_tasks.add_task(notify_weinrot_dm, body.from_id, body.content)
+
+    return {"id": dm_id, "status": "sent"}
 
 
 @app.post("/rounds/constitution")
@@ -232,6 +351,55 @@ async def wiki_page(page_id: int):
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     return page
+
+
+# ── Wiki reale — articoli permanenti (filosofia Wikipedia) ───────────────────
+
+@app.get("/wiki/articles")
+async def list_wiki_articles():
+    """Tutti gli articoli permanenti del wiki, ordinati per ultimo aggiornamento."""
+    return await get_all_wiki_articles(limit=200)
+
+
+@app.get("/wiki/articles/search")
+async def search_wiki_articles_api(q: str):
+    """Ricerca full-text sugli articoli permanenti del wiki."""
+    return await search_wiki_articles(q, limit=30)
+
+
+@app.get("/wiki/articles/{article_id}")
+async def wiki_article_detail(article_id: int):
+    """Dettaglio articolo wiki con contenuto completo."""
+    article = await get_wiki_article(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    links = await get_wiki_article_links(article_id)
+    return {**article, "linked_articles": links}
+
+
+@app.get("/wiki/articles/{article_id}/revisions")
+async def wiki_article_revisions(article_id: int):
+    """Cronologia completa delle revisioni di un articolo wiki."""
+    article = await get_wiki_article(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    revisions = await get_wiki_article_revisions(article_id)
+    return {"article": article, "revisions": revisions}
+
+
+@app.get("/wiki/articles/{article_id}/links")
+async def wiki_article_links_api(article_id: int):
+    """Articoli linkati da questo articolo (outbound cross-references)."""
+    article = await get_wiki_article(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return await get_wiki_article_links(article_id)
+
+
+@app.get("/rounds/{round_id}/wiki-articles")
+async def round_wiki_articles(round_id: int):
+    """Articoli permanenti creati o aggiornati durante questo round."""
+    return await get_wiki_articles_by_round(round_id)
 
 
 @app.get("/publications")
