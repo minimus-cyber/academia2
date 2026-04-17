@@ -462,109 +462,218 @@ async function renderPublications(el, topbar, pubId) {
   }
 }
 
-// ── LABS — per-department canvases ────────────────────────────────────────────
+// ── LABS — DAO Workspace (org chart + single canvas + chat) ─────────────────
 
-function _deptId(dept) {
-  return String(dept).toLowerCase().replace(/[^a-z0-9]/g, "_");
-}
-
-async function renderLabs(el, topbar, activeDept) {
-  topbar.textContent = "⚗ Labs";
+async function renderLabs(el, topbar, selectedDaoId) {
+  topbar.textContent = "⚗ Labs — DAO Workspace";
   el.innerHTML = `<div class="loader"><span></span><span></span><span></span></div>`;
 
-  const [agents, artifacts] = await Promise.all([api("/agents"), api("/labs/all")]);
+  const agents = await api("/agents");
+  if (!agents || agents.length === 0) {
+    el.innerHTML = `<div class="card"><p style="font-size:12px">No DAOs found.</p></div>`; return;
+  }
 
-  // Build dept → {researchers, artifacts}
-  const deptMap = {};
-  (agents || []).filter(a => a.role === "researcher" && a.department).forEach(a => {
-    if (!deptMap[a.department]) deptMap[a.department] = { agents: [], artifacts: [] };
-    deptMap[a.department].agents.push(a);
-  });
-  // Also include departments from coordinators/others if they have artifacts
-  (agents || []).filter(a => a.role !== "researcher" && a.department).forEach(a => {
-    if (!deptMap[a.department]) deptMap[a.department] = { agents: [], artifacts: [] };
-  });
+  const seniores     = agents.filter(a => a.role === "senior");
+  const coordinators = agents.filter(a => a.role === "coordinator");
+  const researchers  = agents.filter(a => a.role === "researcher");
+  const students     = agents.filter(a => a.role === "student");
 
-  const artifactsByAuthor = {};
-  (artifacts || []).forEach(art => {
-    if (!artifactsByAuthor[art.author_id]) artifactsByAuthor[art.author_id] = [];
-    artifactsByAuthor[art.author_id].push(art);
+  // Build dept map: dept -> {coordinator, researchers}
+  const depts = {};
+  coordinators.forEach(c => {
+    if (c.department) {
+      if (!depts[c.department]) depts[c.department] = { coordinator: null, researchers: [] };
+      depts[c.department].coordinator = c;
+    }
   });
-
-  // Assign artifacts to departments
-  (agents || []).forEach(a => {
-    if (a.department && deptMap[a.department] && artifactsByAuthor[a.id]) {
-      deptMap[a.department].artifacts.push(...artifactsByAuthor[a.id]);
+  researchers.forEach(r => {
+    if (r.department) {
+      if (!depts[r.department]) depts[r.department] = { coordinator: null, researchers: [] };
+      depts[r.department].researchers.push(r);
     }
   });
 
-  const depts = Object.keys(deptMap);
-  if (depts.length === 0) {
-    el.innerHTML = `<div class="card"><p style="font-size:12px">No lab departments found. Add researchers to Academia to activate labs.</p></div>`;
-    return;
+  function nodeHtml(agent, indent) {
+    return `<div class="lab-tree-node" style="padding-left:${indent}px"
+                 onclick="selectLabDao('${agent.id}')">
+      <span class="lab-node-symbol">${agent.symbol || "◆"}</span>
+      <span class="lab-node-name">${agent.name}</span>
+    </div>`;
   }
 
-  el.innerHTML = depts.map(dept => {
-    const { agents: dAgents, artifacts: dArtifacts } = deptMap[dept];
-    const did = _deptId(dept);
-    const latest = dArtifacts.sort((a, b) => b.id - a.id)[0];
-    const canvasHtml = state.labCanvases[dept] || (latest ? latest.html_content : null);
-    const emptyCanvas = `<div style="font-size:12px;color:var(--text-dim);padding:2rem;text-align:center;font-family:inherit">
-      No experiments yet for ${escHtml(dept)}<br><span style="font-size:10px;opacity:0.6">Use the inject panel below or run a research round</span></div>`;
+  let treeHtml = "";
+  if (seniores.length > 0) {
+    treeHtml += `<div class="lab-tree-section">Seniores</div>`;
+    seniores.forEach(s => { treeHtml += nodeHtml(s, 10); });
+  }
+  Object.entries(depts).forEach(([dept, { coordinator, researchers: rs }]) => {
+    treeHtml += `<div class="lab-tree-section" style="margin-top:0.6rem">${dept}</div>`;
+    if (coordinator) treeHtml += nodeHtml(coordinator, 10);
+    rs.forEach(r => { treeHtml += nodeHtml(r, 24); });
+  });
+  if (students.length > 0) {
+    treeHtml += `<div class="lab-tree-section" style="margin-top:0.6rem">Studenti</div>`;
+    students.forEach(s => { treeHtml += nodeHtml(s, 10); });
+  }
 
-    return `
-    <div class="card" style="${activeDept && activeDept !== dept ? 'opacity:0.7' : ''}">
-      <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.8rem">
-        <div class="card-title" style="margin:0">⚗ ${escHtml(dept)}</div>
-        <span style="font-size:10px;color:var(--text-dim)">${dAgents.length} researcher${dAgents.length !== 1 ? "s" : ""} · ${dArtifacts.length} artifact${dArtifacts.length !== 1 ? "s" : ""}</span>
+  el.innerHTML = `
+  <div class="lab-layout">
+    <div class="lab-tree" id="lab-tree">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);padding:0.5rem 0.75rem;border-bottom:1px solid var(--border)">Select DAO</div>
+      ${treeHtml}
+    </div>
+    <div class="lab-workspace" id="lab-workspace">
+      <div class="lab-empty">
+        <span style="font-size:2rem">⚗</span>
+        <div>← Seleziona un DAO dall'organigramma</div>
+        <div style="font-size:10px;opacity:0.6">Vedrai il suo lavoro e potrai interrogarlo</div>
       </div>
+    </div>
+  </div>`;
 
-      <iframe id="lab-frame-${did}"
-        class="lab-frame"
-        srcdoc="${canvasHtml ? escAttr(canvasHtml) : escAttr(emptyCanvas)}"
-        sandbox="allow-scripts allow-same-origin"
-        style="width:100%;height:320px;border:1px solid var(--border);border-radius:4px;background:#fff"></iframe>
+  if (selectedDaoId) selectLabDao(selectedDaoId);
+}
 
-      ${dArtifacts.length > 0 ? `
-      <div style="margin-top:0.6rem">
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);margin-bottom:0.3rem">Artifacts</div>
-        ${dArtifacts.slice(0, 5).map(a => `
-          <div style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:10px;flex:1">${a.filename || "artifact"}</span>
-            <span style="font-size:10px;color:var(--text-dim)">${a.author_name || a.author_id}</span>
-            <button class="btn btn-ghost" style="font-size:10px;padding:0.15rem 0.4rem"
-              onclick="loadLabArtifact('${did}','${did}_${a.id}',${a.id})">Load</button>
-          </div>`).join("")}
+async function selectLabDao(daoId) {
+  state._labSelectedDao = daoId;
+
+  document.querySelectorAll(".lab-tree-node").forEach(n => n.classList.remove("selected"));
+  document.querySelectorAll(".lab-tree-node").forEach(n => {
+    if ((n.getAttribute("onclick") || "").includes(daoId)) n.classList.add("selected");
+  });
+
+  const workspace = document.getElementById("lab-workspace");
+  if (!workspace) return;
+  workspace.innerHTML = `<div class="loader" style="margin:2rem"><span></span><span></span><span></span></div>`;
+
+  const [agents, artifacts, thread] = await Promise.all([
+    api("/agents"),
+    api("/labs/all"),
+    api(`/dm/thread/professor/${daoId}`),
+  ]);
+
+  const dao = (agents || []).find(a => a.id === daoId);
+  if (!dao) return;
+
+  const daoArtifacts = (artifacts || []).filter(a => a.author_id === daoId);
+  const latest = daoArtifacts[0];
+  const canvasHtml = state.labCanvases[daoId] || (latest ? latest.html_content : null);
+  const emptyCanvas = `<div style="font-family:monospace;font-size:12px;color:#888;padding:2rem;text-align:center">
+    Nessun artefatto per ${escHtml(dao.name)}<br>
+    <span style="font-size:10px">Chiedigli di crearne uno nella chat qui sotto</span></div>`;
+
+  workspace.innerHTML = `
+    <div class="lab-dao-header">
+      <span style="font-size:1.6rem">${dao.symbol || "◆"}</span>
+      <div>
+        <div style="font-size:13px;font-weight:600">${dao.name}</div>
+        <div style="font-size:10px;color:var(--text-dim)">${dao.discipline || dao.role}${dao.department ? " · " + dao.department : ""}</div>
+      </div>
+      ${daoArtifacts.length > 0 ? `
+      <div style="margin-left:auto;display:flex;align-items:center;gap:0.4rem">
+        <select id="artifact-select" onchange="loadSelectedArtifact('${daoId}')"
+          style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.2rem 0.4rem;font-size:10px;font-family:inherit">
+          <option value="">Latest artifact</option>
+          ${daoArtifacts.slice(0,10).map(a => `<option value="${a.id}">${escHtml(a.filename || "artifact")}</option>`).join("")}
+        </select>
       </div>` : ""}
+    </div>
 
-      <div style="margin-top:0.8rem;border-top:1px solid var(--border);padding-top:0.8rem">
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:var(--weinrot);margin-bottom:0.4rem">Inject HTML to Canvas</div>
-        <textarea id="lab-inject-${did}" rows="4"
-          style="width:100%;padding:0.4rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;resize:vertical;box-sizing:border-box;font-family:monospace;font-size:11px"
-          placeholder="&lt;html&gt; or fragment to deploy to this lab canvas…"></textarea>
-        <button class="btn" style="margin-top:0.4rem;width:100%" onclick="injectLabHTML('${dept}','${did}')">Deploy to Canvas</button>
-      </div>
+    <iframe id="lab-canvas" class="lab-canvas"
+      srcdoc="${escAttr(canvasHtml || emptyCanvas)}"
+      sandbox="allow-scripts allow-same-origin"></iframe>
+
+    <div class="lab-chat" id="lab-chat">
+      ${_renderLabChatMessages(thread || [], dao)}
+    </div>
+
+    <div class="lab-chat-input">
+      <textarea id="lab-chat-text" rows="2"
+        style="flex:1;padding:0.4rem 0.6rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;resize:none;font-family:inherit;font-size:12px"
+        placeholder="Chiedi a ${escAttr(dao.name)} di mostrarti il suo lavoro, spiegare un concetto o creare un artefatto..."
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendLabChat('${daoId}')}"></textarea>
+      <button class="btn" onclick="sendLabChat('${daoId}')">→</button>
+    </div>
+  `;
+
+  // Scroll chat to bottom
+  const chat = document.getElementById("lab-chat");
+  if (chat) chat.scrollTop = chat.scrollHeight;
+}
+
+function _renderLabChatMessages(thread, dao) {
+  if (!thread || thread.length === 0) {
+    return `<div style="font-size:11px;color:var(--text-dim);text-align:center;padding:1rem;margin:auto">Nessuna conversazione ancora — inizia qui sotto</div>`;
+  }
+  return thread.map(m => {
+    const isMe = m.from_id === "professor";
+    return `<div class="lab-chat-msg ${isMe ? "mine" : "theirs"}">
+      <div class="lab-chat-bubble">${escHtml(m.content)}</div>
+      <div class="lab-chat-meta">${isMe ? "🎓 Professor" : (dao.symbol || "◆") + " " + dao.name}${m.created_at ? " · " + m.created_at : ""}</div>
     </div>`;
   }).join("");
 }
 
-function injectLabHTML(dept, did) {
-  const ta = document.getElementById(`lab-inject-${did}`);
-  if (!ta || !ta.value.trim()) return;
-  state.labCanvases[dept] = ta.value.trim();
-  const frame = document.getElementById(`lab-frame-${did}`);
-  if (frame) frame.srcdoc = state.labCanvases[dept];
-  ta.value = "";
+async function sendLabChat(daoId) {
+  const input = document.getElementById("lab-chat-text");
+  const text  = input?.value?.trim();
+  if (!text) return;
+  input.value = "";
+
+  const chat = document.getElementById("lab-chat");
+  if (chat) {
+    chat.insertAdjacentHTML("beforeend", `
+      <div class="lab-chat-msg mine">
+        <div class="lab-chat-bubble">${escHtml(text)}</div>
+        <div class="lab-chat-meta">🎓 Professor · just now</div>
+      </div>
+      <div class="lab-chat-msg theirs" id="lab-thinking">
+        <div class="lab-chat-bubble" style="color:var(--text-dim)">…</div>
+      </div>`);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  const res = await api(`/labs/chat/${daoId}`, {
+    method: "POST",
+    body: JSON.stringify({ content: text }),
+  });
+
+  document.getElementById("lab-thinking")?.remove();
+
+  if (!res) {
+    chat?.insertAdjacentHTML("beforeend", `<div class="lab-chat-msg theirs">
+      <div class="lab-chat-bubble" style="color:var(--text-dim)">[DAO unavailable]</div></div>`);
+    return;
+  }
+
+  if (chat) {
+    const d = res.dao || {};
+    chat.insertAdjacentHTML("beforeend", `
+      <div class="lab-chat-msg theirs">
+        <div class="lab-chat-bubble">${escHtml(res.response || "")}</div>
+        <div class="lab-chat-meta">${d.symbol || "◆"} ${d.name || daoId}</div>
+      </div>`);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  // Load HTML artifact into canvas if returned
+  if (res.html_artifact) {
+    state.labCanvases[daoId] = res.html_artifact;
+    const frame = document.getElementById("lab-canvas");
+    if (frame) frame.srcdoc = res.html_artifact;
+  }
 }
 
-async function loadLabArtifact(did, key, artifactId) {
-  const data = await api(`/labs/artifact/${artifactId}`);
-  if (!data || !data.html_content) return;
-  const frame = document.getElementById(`lab-frame-${did}`);
-  if (frame) frame.srcdoc = data.html_content;
+async function loadSelectedArtifact(daoId) {
+  const sel = document.getElementById("artifact-select");
+  if (!sel || !sel.value) return;
+  const data = await api(`/labs/artifact/${sel.value}`);
+  if (data?.html_content) {
+    state.labCanvases[daoId] = data.html_content;
+    const frame = document.getElementById("lab-canvas");
+    if (frame) frame.srcdoc = data.html_content;
+  }
 }
-
-// ── CONSTITUTION ──────────────────────────────────────────────────────────────
 
 async function renderConstitution(el, topbar) {
   topbar.textContent = "Round 0 — Constitution";

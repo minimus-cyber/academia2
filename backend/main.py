@@ -11,6 +11,8 @@ import aiosqlite
 
 from config import ACADEMIA_VERSION, DB_PATH
 from db import (
+    add_memory,
+    get_recent_memories,
     init_db,
     get_all_agents,
     get_agent,
@@ -424,6 +426,85 @@ async def pub_html(pub_id: int):
     return HTMLResponse(content=html)
 
 
+
+
+@app.post("/labs/chat/{dao_id}")
+async def labs_chat(dao_id: str, body: dict):
+    """Professor talks to a DAO in the lab workspace.
+    DAO responds via LLM. Conversation saved to DM history + DAO memory."""
+    from dm import emit_dm
+    from datetime import datetime as _dt
+
+    content = (body or {}).get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content required")
+
+    dao = await get_agent(dao_id)
+    if not dao:
+        raise HTTPException(status_code=404, detail="DAO not found")
+
+    # Save professor message to DM
+    dm_prof_id = await create_dm("professor", dao_id, content)
+
+    # Get DAO recent memories for context
+    memories = await get_recent_memories(dao_id, limit=5)
+    mem_ctx = "\n".join(m["content"] for m in memories) if memories else ""
+
+    # Lab-specific system prompt (concrete, technical, artifact-producing)
+    lab_system = (
+        f"{dao['identity_prompt']}\n\n"
+        f"You are in your personal lab workspace in Academia Intermundia. "
+        f"The Professor is consulting you directly about your area of expertise: "
+        f"{dao.get('discipline', dao.get('role', 'research'))}. "
+        f"This is a working session — be concrete, direct, and technical. "
+        f"If asked to create a visualization, simulation, model, or any digital artifact, "
+        f"produce it as standalone HTML in ```html ... ``` tags at the end of your response. "
+        f"The HTML must run in a browser and demonstrate your work visually and interactively."
+    )
+    lab_user = (
+        (f"Your recent work context:\n{mem_ctx}\n\n" if mem_ctx else "")
+        + f'The Professor says: "{content}"'
+    )
+
+    response = await llm_call_agent(dao, lab_system, lab_user, max_tokens=900)
+    if not response:
+        response = f"[{dao['name']} is currently unavailable]"
+
+    # Extract HTML artifact
+    html_artifact = _extract_html_artifact(response)
+
+    # Save DAO response to DM + emit SSE
+    dm_dao_id = await create_dm(dao_id, "professor", response)
+    await emit_dm("professor", {
+        "id": dm_dao_id, "from_id": dao_id, "to_id": "professor",
+        "content": response, "created_at": _dt.utcnow().isoformat()
+    })
+
+    # Save to DAO memory
+    await add_memory(
+        dao_id,
+        f"Lab chat with Professor: '{content[:100]}' — "
+        + ("produced HTML artifact" if html_artifact else "responded with analysis"),
+        None,
+    )
+
+    # Persist HTML artifact if present
+    artifact_id = None
+    if html_artifact:
+        fname = f"labchat_{dao_id.replace('-','_')}_{_dt.now().strftime('%Y%m%d_%H%M%S')}.html"
+        artifact_id = await add_lab_artifact(0, dao_id, fname, html_artifact)
+
+    return {
+        "response": response,
+        "html_artifact": html_artifact,
+        "artifact_id": artifact_id,
+        "dao": {
+            "id": dao["id"],
+            "name": dao["name"],
+            "symbol": dao.get("symbol", "◆"),
+            "discipline": dao.get("discipline", ""),
+        },
+    }
 
 @app.get("/labs/all")
 async def lab_artifacts_all():
