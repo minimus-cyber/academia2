@@ -140,7 +140,7 @@ async function renderDashboard(el, topbar) {
           <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.2em;color:var(--weinrot);padding:0.35rem 0;border-bottom:1px solid var(--border);margin-bottom:0.7rem">${roleLabel[role]} (${list.length})</div>
           <div class="agents-grid">
             ${list.map(a => `
-              <div class="agent-card ${a.role}">
+              <div class="agent-card ${a.role}" style="cursor:pointer" onclick="if(!event.target.closest('button'))navigate('labs',{selectedDaoId:'${a.id}'})">
                 <div class="agent-symbol">${a.symbol || "◆"}</div>
                 <div class="agent-name">${a.name}</div>
                 <div class="agent-origin">${a.origin || ""}</div>
@@ -167,27 +167,63 @@ async function renderDashboard(el, topbar) {
     const msgEl = document.getElementById("dash-msgs-content");
     if (!msgEl) return;
 
-    if (!convs || convs.length === 0) {
-      msgEl.innerHTML = `<p style="font-size:12px;color:var(--text-dim)">No messages yet. Use the DM button on any DAO above to start a conversation.</p>`;
-    } else {
-      msgEl.innerHTML = convs.slice(0, 10).map(c => `
-        <div style="display:flex;align-items:center;gap:1rem;padding:0.4rem 0;border-bottom:1px solid var(--border);cursor:pointer"
-             onclick="navigate('thread',{from:'professor',to:'${c.other}'})">
-          <span style="font-size:1.3rem">${c.other_symbol || "🤖"}</span>
-          <div style="flex:1">
-            <div style="font-size:12px;font-weight:500">${c.other_name || c.other}</div>
-            <div style="font-size:10px;color:var(--text-dim)">${escHtml((c.content || "").slice(0, 60))}…</div>
-          </div>
-          ${!c.read_at && c.other !== "professor" ? '<span style="color:var(--weinrot);font-size:10px">●</span>' : ""}
-        </div>`).join("");
+    // Cronologia unificata: tutte le conversazioni ordinate per messaggio più recente
+    const sorted = (convs || []).sort((a, b) =>
+      (b.created_at || "").localeCompare(a.created_at || "")
+    );
+
+    // Blocco "nuova conversazione"
+    const ags = state.agents || [];
+    const newConvBlock = ags.length === 0 ? "" : `
+      <div style="margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:0.4rem;
+             text-transform:uppercase;letter-spacing:0.1em">Nuova conversazione</div>
+        <div style="display:flex;gap:0.4rem;align-items:center">
+          <select id="new-conv-select" style="flex:1;background:var(--surface);color:var(--text);
+              border:1px solid var(--border);border-radius:4px;padding:0.25rem 0.5rem;
+              font-size:11px;font-family:inherit">
+            <option value="">Scegli un DAO…</option>
+            ${ags.map(a => `<option value="${a.id}">${a.symbol || "◆"} ${escHtml(a.name)}</option>`).join("")}
+          </select>
+          <button class="btn btn-ghost" style="font-size:10px;padding:0.3rem 0.6rem"
+            onclick="(()=>{const s=document.getElementById('new-conv-select');if(s&&s.value)navigate('thread',{from:'professor',to:s.value});})()">
+            → Apri
+          </button>
+        </div>
+      </div>`;
+
+    if (sorted.length === 0) {
+      msgEl.innerHTML = `<p style="font-size:12px;color:var(--text-dim);margin-bottom:0.75rem">
+        Nessun messaggio. Usa DM su un DAO per iniziare.</p>${newConvBlock}`;
+      return;
     }
 
-    const newConvHtml = await _dmNewConvHTML();
-    const msgEl2 = document.getElementById("dash-msgs-content");
-    if (msgEl2) msgEl2.insertAdjacentHTML("beforeend", newConvHtml);
+    const rows = sorted.map(c => {
+      const isMine = c.from_id === "professor";
+      const dir    = c.from_id ? (isMine ? "→" : "←") : "";
+      const ts     = (c.created_at || "").slice(0, 16).replace("T", " ");
+      const unread = !c.read_at && !isMine;
+      return `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.45rem 0;
+                   border-bottom:1px solid var(--border);cursor:pointer"
+                   onclick="navigate('thread',{from:'professor',to:'${c.other}'})">
+        <span style="font-size:1.4rem">${c.other_symbol || "◆"}</span>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:0.4rem">
+            <span style="font-size:12px;font-weight:600">${escHtml(c.other_name || c.other)}</span>
+            ${unread ? '<span style="color:var(--weinrot);font-size:9px">●</span>' : ""}
+            <span style="font-size:9px;color:var(--text-dim);margin-left:auto;white-space:nowrap">${ts}</span>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${dir ? `<span style="color:var(--weinrot)">${dir}</span> ` : ""}${escHtml((c.content || "").slice(0, 65))}
+          </div>
+        </div>
+      </div>`;
+    });
+
+    msgEl.innerHTML = rows.join("") + newConvBlock;
   }
 
-  await _load();
+    await _load();
   state._dashInterval = setInterval(_load, 30000);
 }
 
