@@ -128,7 +128,7 @@ async def round_detail(round_id: int):
         raise HTTPException(status_code=404, detail="Round not found")
     messages = await get_messages(round_id)
     pages = await get_wiki_pages_by_round(round_id)
-    return {**r, "messages": messages, "wiki_pages": pages}
+    return {**r, "messages": messages, "encyclopedia_pages": pages}
 
 
 @app.post("/rounds/start")
@@ -335,41 +335,35 @@ async def stream_constitution(round_id: int):
     return await stream_round(round_id)
 
 
-@app.get("/wiki")
-async def list_wiki():
+@app.get("/encyclopedia")
+async def list_encyclopedia():
     return await get_all_wiki_pages()
 
 
-@app.get("/wiki/search")
-async def wiki_search(q: str):
+@app.get("/encyclopedia/search")
+async def encyclopedia_search(q: str):
     return await search_wiki(q)
 
 
-@app.get("/wiki/{page_id}")
-async def wiki_page(page_id: int):
-    page = await get_wiki_page(page_id)
-    if not page:
-        raise HTTPException(status_code=404, detail="Page not found")
-    return page
 
 
-# ── Wiki reale — articoli permanenti (filosofia Wikipedia) ───────────────────
+# ── Enciclopedia — articoli permanenti (filosofia Wikipedia) ──────────────────
 
-@app.get("/wiki/articles")
-async def list_wiki_articles():
-    """Tutti gli articoli permanenti del wiki, ordinati per ultimo aggiornamento."""
+@app.get("/encyclopedia/articles")
+async def list_encyclopedia_articles():
+    """Tutti gli articoli permanenti dell'Enciclopedia, ordinati per ultimo aggiornamento."""
     return await get_all_wiki_articles(limit=200)
 
 
-@app.get("/wiki/articles/search")
-async def search_wiki_articles_api(q: str):
-    """Ricerca full-text sugli articoli permanenti del wiki."""
+@app.get("/encyclopedia/articles/search")
+async def search_encyclopedia_articles_api(q: str):
+    """Ricerca full-text sugli articoli permanenti dell'Enciclopedia."""
     return await search_wiki_articles(q, limit=30)
 
 
-@app.get("/wiki/articles/{article_id}")
-async def wiki_article_detail(article_id: int):
-    """Dettaglio articolo wiki con contenuto completo."""
+@app.get("/encyclopedia/articles/{article_id}")
+async def encyclopedia_article_detail(article_id: int):
+    """Dettaglio articolo Enciclopedia con contenuto completo."""
     article = await get_wiki_article(article_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -377,9 +371,9 @@ async def wiki_article_detail(article_id: int):
     return {**article, "linked_articles": links}
 
 
-@app.get("/wiki/articles/{article_id}/revisions")
-async def wiki_article_revisions(article_id: int):
-    """Cronologia completa delle revisioni di un articolo wiki."""
+@app.get("/encyclopedia/articles/{article_id}/revisions")
+async def encyclopedia_article_revisions(article_id: int):
+    """Cronologia completa delle revisioni di un articolo Enciclopedia."""
     article = await get_wiki_article(article_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -387,17 +381,23 @@ async def wiki_article_revisions(article_id: int):
     return {"article": article, "revisions": revisions}
 
 
-@app.get("/wiki/articles/{article_id}/links")
-async def wiki_article_links_api(article_id: int):
+@app.get("/encyclopedia/articles/{article_id}/links")
+async def encyclopedia_article_links_api(article_id: int):
     """Articoli linkati da questo articolo (outbound cross-references)."""
     article = await get_wiki_article(article_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     return await get_wiki_article_links(article_id)
+@app.get("/encyclopedia/{page_id}")
+async def encyclopedia_page(page_id: int):
+    page = await get_wiki_page(page_id)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return page
 
 
-@app.get("/rounds/{round_id}/wiki-articles")
-async def round_wiki_articles(round_id: int):
+@app.get("/rounds/{round_id}/encyclopedia-articles")
+async def round_encyclopedia_articles(round_id: int):
     """Articoli permanenti creati o aggiornati durante questo round."""
     return await get_wiki_articles_by_round(round_id)
 

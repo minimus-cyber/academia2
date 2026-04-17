@@ -203,7 +203,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
         researchers = await get_agents_by_department(dept)
         researchers = [r for r in researchers if r["role"] == "researcher"]
 
-        # ── FILOSOFIA WIKI: i ricercatori leggono il wiki PRIMA di scrivere ──
+        # ── FILOSOFIA ENCICLOPEDIA: i ricercatori leggono l'Enciclopedia PRIMA di scrivere ──
         relevant_wiki = await get_relevant_articles(theme_en, limit=5)
         wiki_ctx = format_wiki_context(relevant_wiki)
 
@@ -217,8 +217,8 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
                 f"Your recent work context:\n{memories_ctx}\n\n"
                 f"Conduct your research on this theme from your disciplinary perspective "
                 f"({researcher.get('discipline', 'your field')}).\n\n"
-                f"WIKI PROTOCOL (mandatory):\n"
-                f"1. Check the existing wiki articles above.\n"
+                f"ENCYCLOPEDIA PROTOCOL (mandatory):\n"
+                f"1. Check the existing encyclopedia entries above.\n"
                 f"2. If a relevant article exists: expand it. Start your response with:\n"
                 f"   ACTION: EXPAND | Article: [exact ID or title from above]\n"
                 f"3. If no relevant article exists: create a new entry. Start with:\n"
@@ -256,7 +256,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
             dept_pages.append({"id": page_id, "author_id": researcher["id"],
                                 "author_name": researcher["name"], "title": page_title,
                                 "content_en": r_output})
-            # ── WIKI REALE: crea o aggiorna articolo permanente ──────────────
+            # ── ENCICLOPEDIA: crea o aggiorna articolo permanente ──────────────
             w_action, w_ref, w_content = parse_wiki_action(r_output)
             art_id, art_op = await write_wiki_contribution(
                 author_id=researcher["id"],
@@ -268,7 +268,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
                 department=dept,
             )
             yield {
-                "event": "wiki_article",
+                "event": "encyclopedia_article",
                 "article_id": art_id,
                 "operation": art_op,
                 "author_id": researcher["id"],
@@ -278,7 +278,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
             # Spontaneous peer DM (30% chance, fire-and-forget)
             asyncio.create_task(maybe_dm_peer(researcher, theme_en, all_agents))
             yield {
-                "event": "wiki_page",
+                "event": "encyclopedia_page",
                 "page_id": page_id,
                 "title": page_title,
                 "author_id": researcher["id"],
@@ -489,7 +489,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
                     "phase": "revision",
                 }
 
-    # ── WIKI: articolo di sintesi del round prodotto dai Senior ────────────
+    # ── ENCICLOPEDIA: articolo di sintesi del round prodotto dai Senior ────────────
     combined_synthesis = "\n\n---\n\n".join(
         r for r in review_results if isinstance(r, str) and r
     )
@@ -503,7 +503,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
                 synthesis_content=combined_synthesis,
             )
             yield {
-                "event": "wiki_article",
+                "event": "encyclopedia_article",
                 "article_id": synthesis_art_id,
                 "operation": "synthesis",
                 "author_id": first_senior["id"],
@@ -524,7 +524,7 @@ async def run_round(round_id: int, theme_en: str) -> AsyncGenerator[dict, None]:
     approved_count = sum(1 for p in all_pages if p["status"] == "approved")
     summary = (
         f"Round {round_id} completed. Theme: '{theme_en}'. "
-        f"Wiki pages produced: {len(all_pages)} ({approved_count} approved). "
+        f"Encyclopedia entries produced: {len(all_pages)} ({approved_count} approved). "
         f"Departments active: {len(dept_wiki_pages)}. "
         f"Awaiting Professor's Placet to publish."
     )
@@ -738,7 +738,7 @@ async def run_constitution_round(round_id: int = None) -> AsyncGenerator[dict, N
     else:
         constitution_text = all_proposals
 
-    # Save constitution as wiki page
+    # Save constitution as encyclopedia page
     page_id = await add_wiki_page(
         round_id,
         amara["id"] if amara else "coord-studium",
@@ -748,7 +748,7 @@ async def run_constitution_round(round_id: int = None) -> AsyncGenerator[dict, N
     await approve_wiki_page(page_id)
 
     yield {
-        "event": "wiki_page",
+        "event": "encyclopedia_page",
         "page_id": page_id,
         "title": "Constitution of Academia Intermundia",
         "author_id": amara["id"] if amara else "coord-studium",

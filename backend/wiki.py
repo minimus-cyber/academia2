@@ -22,7 +22,7 @@ def build_article_slug(title: str) -> str:
 
 async def get_relevant_articles(theme: str, limit: int = 5) -> list[dict]:
     """
-    Trova articoli wiki esistenti rilevanti per il tema corrente.
+    Trova articoli dell'Enciclopedia esistenti rilevanti per il tema corrente.
     Usato per iniettare contesto nei ricercatori PRIMA che scrivano.
     Filosofia: i DAO devono sapere cosa esiste già prima di contribuire.
     """
@@ -57,14 +57,14 @@ def format_wiki_context(articles: list[dict]) -> str:
     """
     if not articles:
         return (
-            "=== WIKI DI ACADEMIA INTERMUNDIA ===\n"
+            "=== ENCICLOPEDIA DI ACADEMIA INTERMUNDIA ===\n"
             "Nessun articolo esistente su questo tema. Sei il primo a documentarlo.\n"
             "ACTION: CREATE | Title: [titolo descrittivo]\n"
-            "=== FINE CONTESTO WIKI ==="
+            "=== FINE CONTESTO ENCICLOPEDIA ==="
         )
 
     lines = [
-        "=== WIKI DI ACADEMIA INTERMUNDIA — ARTICOLI ESISTENTI ===",
+        "=== ENCICLOPEDIA DI ACADEMIA INTERMUNDIA — ARTICOLI ESISTENTI ===",
         "Leggi con attenzione prima di scrivere. Non duplicare — espandi o crea voce nuova.",
         "",
     ]
@@ -80,7 +80,7 @@ def format_wiki_context(articles: list[dict]) -> str:
         )
         lines.append("")
 
-    lines.append("=== FINE CONTESTO WIKI ===")
+    lines.append("=== FINE CONTESTO ENCICLOPEDIA ===")
     return "\n".join(lines)
 
 
@@ -143,10 +143,10 @@ async def write_wiki_contribution(
     Esegui l'azione wiki del ricercatore: CREATE o EXPAND.
     Ritorna (article_id, "created"|"expanded").
 
-    Filosofia wiki:
+    Filosofia Enciclopedia:
     - EXPAND: trova l'articolo (per ID o titolo), aggiunge il nuovo contributo
       come nuova sezione in fondo (non sovrascrive — il vecchio contenuto è preservato)
-    - CREATE: crea una nuova voce permanente nel wiki
+    - CREATE: crea una nuova voce permanente nell'Enciclopedia
     """
     # Genera tag dal tema
     tags = " ".join(w for w in theme.lower().split() if len(w) > 4)[:200]
@@ -195,7 +195,7 @@ async def write_synthesis_article(
 ) -> int:
     """
     Crea o aggiorna l'articolo di sintesi del round.
-    I Seniores producono la visione d'insieme: questo diventa una voce wiki di alto livello.
+    I Seniores producono la visione d'insieme: questo diventa una voce Enciclopedia di alto livello.
     """
     synthesis_title = f"Synthesis: {theme[:80]}"
     # Cerca se esiste già una sintesi su questo tema
@@ -221,10 +221,10 @@ async def write_synthesis_article(
 # ── Build round summary (per senior review — usa ancora wiki_pages legacy) ────
 
 async def build_round_summary(round_id: int) -> str:
-    """Riassunto testuale delle wiki_pages di un round per la senior review."""
+    """Riassunto testuale delle voci enciclopedia di un round per la senior review."""
     pages = await get_wiki_pages(round_id)
     if not pages:
-        return "No wiki pages produced in this round."
+        return "No encyclopedia entries produced in this round."
     parts = []
     for page in pages:
         author = await get_agent(page["author_id"])
