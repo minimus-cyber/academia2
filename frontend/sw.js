@@ -1,4 +1,4 @@
-const CACHE = "academia-v2";
+const CACHE = "academia-v4";
 const STATIC = ["/academia/", "/academia/index.html", "/academia/style.css",
                 "/academia/app.js", "/academia/wiki.js", "/academia/lab.js"];
 

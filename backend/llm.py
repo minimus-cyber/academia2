@@ -113,7 +113,8 @@ async def _copilot_chat(model_name: str, messages: list, max_tokens: int, temper
         "Copilot-Integration-Id": "vscode-chat",
     }
     url = f"{_copilot.api_base()}/chat/completions"
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=90)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(url, json=payload, headers=headers) as resp:
             resp.raise_for_status()
             data = await resp.json()
@@ -252,13 +253,19 @@ async def llm_call_agent(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    return await llm_call(
-        model_id=model_id,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.7,
-        agent_name=agent.get("name", "Agent"),
-    )
+    try:
+        return await asyncio.wait_for(
+            llm_call(
+                model_id=model_id,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7,
+                agent_name=agent.get("name", "Agent"),
+            ),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        return f"[{agent.get('name', 'Agent')} timed out after 120s]"
 
 
 async def translate_to_english(text: str) -> str:
